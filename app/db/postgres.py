@@ -38,3 +38,6 @@ def verify_postgres():
     with engine.connect() as connection:
         result = connection.execute(text("SELECT 1"))
         return result.scalar() == 1
+    
+def create_tables():
+    Base.metadata.create_all(bind=engine)

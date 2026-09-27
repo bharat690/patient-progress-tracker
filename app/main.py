@@ -2,19 +2,26 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+import app.models
+
 from app.db.neo4j import close_neo4j
 from app.db.neo4j import verify_neo4j
 from app.db.postgres import verify_postgres
+from app.db.postgres import create_tables
+
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Starting Patient Progress Tracker...")
 
+    create_tables()
+
     yield
 
     close_neo4j()
     print("Connections closed.")
+    
 
 
 app = FastAPI(
