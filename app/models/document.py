@@ -15,6 +15,7 @@ class Document(Base):
     )
 
     filename: Mapped[str] = mapped_column(String(255))
+
     document_type: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True,
