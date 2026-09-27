@@ -10,6 +10,7 @@ from app.db.postgres import verify_postgres
 from app.db.postgres import create_tables
 
 from app.api.patients import router as patients_router
+from app.api.documents import router as documents_router
 
 from sqlalchemy import select
 
@@ -55,6 +56,7 @@ app = FastAPI(
 )
 
 app.include_router(patients_router)
+app.include_router(documents_router)
 
 @app.get("/")
 def root():
