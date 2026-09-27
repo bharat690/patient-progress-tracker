@@ -9,6 +9,13 @@ from app.db.neo4j import verify_neo4j
 from app.db.postgres import verify_postgres
 from app.db.postgres import create_tables
 
+from app.api.patients import router as patients_router
+
+from sqlalchemy import select
+
+from app.db.postgres import SessionLocal
+from app.models.user import User
+
 
 
 @asynccontextmanager
@@ -16,6 +23,23 @@ async def lifespan(app: FastAPI):
     print("Starting Patient Progress Tracker...")
 
     create_tables()
+
+    with SessionLocal() as db:
+        existing_user = db.scalar(
+            select(User).where(
+                User.email == "demo@patienttracker.local"
+            )
+        )
+
+        if existing_user is None:
+            demo_user = User(
+                name="Demo Doctor",
+                email="demo@patienttracker.local",
+                role="doctor",
+            )
+
+            db.add(demo_user)
+            db.commit()
 
     yield
 
@@ -30,6 +54,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(patients_router)
 
 @app.get("/")
 def root():
