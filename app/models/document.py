@@ -1,6 +1,7 @@
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+
 from app.db.postgres import Base
 
 
@@ -27,3 +28,8 @@ class Document(Base):
     )
 
     file_path: Mapped[str] = mapped_column(String(500))
+
+    storage_key: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )

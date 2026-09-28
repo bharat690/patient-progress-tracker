@@ -5,16 +5,51 @@ from sqlalchemy.orm import Session
 from app.db.postgres import get_db
 from app.models.patient import Patient
 from app.schemas.patient import PatientCreate, PatientResponse
+from app.schemas.rag import (
+    PatientQuestion,
+    PatientQuestionResponse,
+)
 
+from app.services.rag import answer_patient_question
 from app.services.patient_timeline import get_patient_timeline
 from app.services.trends import get_patient_trend
 from app.services.comparison import compare_patient_reports
+from app.services.metrics import get_patient_metrics
+
 
 
 router = APIRouter(
     prefix="/patients",
     tags=["Patients"],
 )
+
+@router.post(
+    "/{patient_id}/ask",
+    response_model=PatientQuestionResponse,
+)
+def ask_patient(
+    patient_id: int,
+    request: PatientQuestion,
+):
+    result = answer_patient_question(
+        patient_id=patient_id,
+        question=request.question,
+    )
+
+    return {
+        "patient_id": patient_id,
+        "question": request.question,
+        "answer": result["answer"],
+        "sources": result["sources"],
+    }
+
+
+@router.get("/{patient_id}/metrics")
+def patient_metrics(patient_id: int):
+    return {
+        "patient_id": patient_id,
+        "metrics": get_patient_metrics(patient_id),
+    }
 
 @router.get("/{patient_id}/compare")
 def compare_reports(

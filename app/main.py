@@ -10,12 +10,19 @@ from app.db.postgres import verify_postgres
 from app.db.postgres import create_tables
 
 from app.api.patients import router as patients_router
-from app.api.documents import router as documents_router
+
+from app.api.documents import (
+    router as documents_router,
+    document_router,
+)
 
 from sqlalchemy import select
 
 from app.db.postgres import SessionLocal
 from app.models.user import User
+
+from fastapi.middleware.cors import CORSMiddleware
+
 
 
 
@@ -55,8 +62,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:4173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 app.include_router(patients_router)
 app.include_router(documents_router)
+app.include_router(document_router)
 
 @app.get("/")
 def root():

@@ -1,7 +1,11 @@
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import Response
+
 from sqlalchemy.orm import Session
+
+from app.schemas.document import DocumentResponse
 
 
 from app.db.postgres import get_db
@@ -13,11 +17,14 @@ from app.services.metadata_extractor import (
     extract_document_type,
     extract_report_date,
 )
+
+
 from app.services.neo4j_sync import sync_document_to_neo4j
 from app.services.medical_extractor import extract_medical_data
 from app.services.medical_persistence import persist_medical_data
 from app.services.pdf_extractor import extract_text_from_pdf
 from app.services.vector_sync import sync_document_chunks_to_neo4j
+from app.services.object_storage import upload_file, download_file
 
 
 router = APIRouter(
@@ -25,9 +32,71 @@ router = APIRouter(
     tags=["Documents"],
 )
 
+document_router = APIRouter(
+    prefix="/documents",
+    tags=["Documents"],
+)
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+
+@document_router.get("/{document_id}/file")
+def get_document_file(
+    document_id: int,
+    db: Session = Depends(get_db),
+):
+    document = db.get(Document, document_id)
+
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
+        )
+
+    if not document.storage_key:
+        raise HTTPException(
+            status_code=404,
+            detail="Document file not available in object storage",
+        )
+
+    try:
+        pdf_bytes = download_file(document.storage_key)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Document file could not be retrieved",
+        ) from exc
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'inline; filename="{document.filename}"'
+            )
+        },
+    )
+
+@document_router.get(
+    "/{document_id}",
+    response_model=DocumentResponse,
+)
+def get_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+):
+    document = db.get(Document, document_id)
+
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
+        )
+
+    return document
+
+
 
 
 @router.post("/{patient_id}/documents", status_code=201)
@@ -79,6 +148,21 @@ async def upload_document(
     db.add(document)
     db.commit()
     db.refresh(document)
+    
+    
+    storage_key = (
+        f"patients/{patient_id}/documents/"
+        f"{document.id}/{document.filename}"
+    )
+
+    upload_file(
+        file_path=file_path,
+        object_key=storage_key,
+    )
+
+    document.storage_key = storage_key
+
+    db.commit()
 
     for index, chunk in enumerate(chunks):
         document_chunk = DocumentChunk(

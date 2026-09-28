@@ -5,6 +5,15 @@ __pycache__/
 *.py[cod]
 *.pyo
 
+.env
+.venv/
+__pycache__/
+*.pyc
+
+uploads/
+*.pdf
+
+.fastapicloud/
 
 uploads/
 
