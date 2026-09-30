@@ -9,7 +9,7 @@ from app.api.documents import document_router, router as documents_router
 from app.api.patients import router as patients_router
 from app.core.config import CORS_ALLOWED_ORIGINS, validate_auth_config
 from app.db.neo4j import close_neo4j, verify_neo4j
-from app.db.postgres import create_tables, verify_postgres
+from app.db.postgres import verify_postgres
 
 
 @asynccontextmanager
@@ -17,7 +17,6 @@ async def lifespan(app: FastAPI):
     print("Starting Patient Progress Tracker...")
 
     validate_auth_config()
-    create_tables()
 
     yield
 
