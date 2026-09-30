@@ -28,7 +28,7 @@ def get_patient_timeline(patient_id: int):
             dosage: m.dosage,
             frequency: m.frequency,
             start_date: m.start_date,
-            end_date: m.end_date
+            end_date: properties(m).end_date
         }) AS medications,
 
         collect(DISTINCT {
