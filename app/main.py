@@ -1,59 +1,28 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-
-import app.models
-
-from app.db.neo4j import close_neo4j
-from app.db.neo4j import verify_neo4j
-from app.db.postgres import verify_postgres
-from app.db.postgres import create_tables
-
-from app.api.patients import router as patients_router
-
-from app.api.documents import (
-    router as documents_router,
-    document_router,
-)
-
-from sqlalchemy import select
-
-from app.db.postgres import SessionLocal
-from app.models.user import User
-
 from fastapi.middleware.cors import CORSMiddleware
 
-
+import app.models
+from app.api.auth import router as auth_router
+from app.api.documents import document_router, router as documents_router
+from app.api.patients import router as patients_router
+from app.core.config import CORS_ALLOWED_ORIGINS, validate_auth_config
+from app.db.neo4j import close_neo4j, verify_neo4j
+from app.db.postgres import create_tables, verify_postgres
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Starting Patient Progress Tracker...")
 
+    validate_auth_config()
     create_tables()
-
-    with SessionLocal() as db:
-        existing_user = db.scalar(
-            select(User).where(
-                User.email == "demo@patienttracker.local"
-            )
-        )
-
-        if existing_user is None:
-            demo_user = User(
-                name="Demo Doctor",
-                email="demo@patienttracker.local",
-                role="doctor",
-            )
-
-            db.add(demo_user)
-            db.commit()
 
     yield
 
     close_neo4j()
     print("Connections closed.")
-    
 
 
 app = FastAPI(
@@ -64,16 +33,17 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:4173"],
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
+app.include_router(auth_router)
 app.include_router(patients_router)
 app.include_router(documents_router)
 app.include_router(document_router)
+
 
 @app.get("/")
 def root():

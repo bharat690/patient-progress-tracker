@@ -1,11 +1,15 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import MAX_QUESTION_LENGTH
+from app.core.rate_limit import enforce_rate_limit
 from app.db.postgres import get_db
+from app.dependencies.auth import get_current_user
 from app.models.patient import Patient
+from app.models.user import User
 from app.schemas.patient import PatientCreate, PatientResponse
 from app.schemas.rag import (
     PatientQuestion,
@@ -19,11 +23,30 @@ from app.services.comparison import compare_patient_reports
 from app.services.metrics import get_patient_metrics
 
 
-
 router = APIRouter(
     prefix="/patients",
     tags=["Patients"],
 )
+
+
+def get_patient_for_user(
+    db: Session,
+    current_user: User,
+    patient_id: int,
+) -> Patient:
+    patient = db.get(Patient, patient_id)
+    if patient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient not found",
+        )
+    if patient.created_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this patient",
+        )
+    return patient
+
 
 @router.post(
     "/{patient_id}/ask",
@@ -32,7 +55,30 @@ router = APIRouter(
 def ask_patient(
     patient_id: int,
     request: PatientQuestion,
+    request_context: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if len(request.question) > MAX_QUESTION_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Question exceeds maximum length of {MAX_QUESTION_LENGTH} characters",
+        )
+
+    client_key = (
+        f"user:{current_user.id}"
+        if current_user is not None
+        else (request_context.client.host if request_context.client else "anonymous")
+    )
+    try:
+        enforce_rate_limit("RAG", client_key)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
+
+    get_patient_for_user(db, current_user, patient_id)
     result = answer_patient_question(
         patient_id=patient_id,
         question=request.question,
@@ -50,11 +96,14 @@ def ask_patient(
 def patient_metrics(
     patient_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    get_patient_for_user(db, current_user, patient_id)
     return {
         "patient_id": patient_id,
         "metrics": get_patient_metrics(db, patient_id),
     }
+
 
 @router.get("/{patient_id}/compare")
 def compare_reports(
@@ -62,7 +111,9 @@ def compare_reports(
     from_date: date,
     to_date: date,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    get_patient_for_user(db, current_user, patient_id)
     if from_date > to_date:
         raise HTTPException(
             status_code=422,
@@ -76,12 +127,15 @@ def compare_reports(
         to_date=to_date,
     )
 
+
 @router.get("/{patient_id}/trends/{test_name}")
 def patient_trend(
     patient_id: int,
     test_name: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    get_patient_for_user(db, current_user, patient_id)
     return {
         "patient_id": patient_id,
         "test_name": test_name,
@@ -92,12 +146,19 @@ def patient_trend(
         ),
     }
 
+
 @router.get("/{patient_id}/timeline")
-def patient_timeline(patient_id: int):
+def patient_timeline(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    get_patient_for_user(db, current_user, patient_id)
     return {
         "patient_id": patient_id,
         "timeline": get_patient_timeline(patient_id),
     }
+
 
 @router.post(
     "",
@@ -107,12 +168,13 @@ def patient_timeline(patient_id: int):
 def create_patient(
     patient_data: PatientCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     patient = Patient(
         name=patient_data.name,
         date_of_birth=patient_data.date_of_birth,
         gender=patient_data.gender,
-        created_by=patient_data.created_by,
+        created_by=current_user.id,
     )
 
     db.add(patient)
@@ -128,12 +190,13 @@ def create_patient(
 )
 def get_patients(
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    patients = db.scalars(
-        select(Patient).order_by(Patient.id)
+    return db.scalars(
+        select(Patient)
+        .where(Patient.created_by == current_user.id)
+        .order_by(Patient.id)
     ).all()
-
-    return patients
 
 
 @router.get(
@@ -143,15 +206,9 @@ def get_patients(
 def get_patient(
     patient_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    patient = db.get(Patient, patient_id)
-
-    if patient is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Patient not found",
-        )
-
+    patient = get_patient_for_user(db, current_user, patient_id)
     return patient
 
 
@@ -162,14 +219,8 @@ def get_patient(
 def delete_patient(
     patient_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    patient = db.get(Patient, patient_id)
-
-    if patient is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Patient not found",
-        )
-
+    patient = get_patient_for_user(db, current_user, patient_id)
     db.delete(patient)
     db.commit()

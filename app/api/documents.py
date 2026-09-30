@@ -1,32 +1,31 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy import select
-
 from sqlalchemy.orm import Session
 
-from app.schemas.document import DocumentResponse
-
-
+from app.core.config import MAX_UPLOAD_BYTES
+from app.core.dates import normalize_date
+from app.core.rate_limit import enforce_rate_limit
 from app.db.postgres import get_db
+from app.dependencies.auth import get_current_user
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.models.patient import Patient
+from app.models.user import User
+from app.schemas.document import DocumentResponse
 from app.services.chunker import chunk_text
 from app.services.metadata_extractor import (
     extract_document_type,
     extract_report_date,
 )
-
-
-from app.services.neo4j_sync import sync_document_to_neo4j
 from app.services.medical_extractor import extract_medical_data
 from app.services.medical_persistence import persist_medical_data
+from app.services.neo4j_sync import sync_document_to_neo4j
+from app.services.object_storage import download_file, upload_file
 from app.services.pdf_extractor import extract_text_from_pdf
 from app.services.vector_sync import sync_document_chunks_to_neo4j
-from app.services.object_storage import upload_file, download_file
-
 
 router = APIRouter(
     prefix="/patients",
@@ -42,6 +41,45 @@ UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
+def get_patient_for_user(
+    db: Session,
+    current_user: User,
+    patient_id: int,
+) -> Patient:
+    patient = db.get(Patient, patient_id)
+    if patient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient not found",
+        )
+    if patient.created_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this patient",
+        )
+    return patient
+
+
+def get_document_for_user(
+    db: Session,
+    current_user: User,
+    document_id: int,
+) -> Document:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+    patient = db.get(Patient, document.patient_id)
+    if patient is None or patient.created_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this document",
+        )
+    return document
+
+
 @router.get(
     "/{patient_id}/documents",
     response_model=list[DocumentResponse],
@@ -49,29 +87,39 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 def get_patient_documents(
     patient_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    return db.scalars(
+    get_patient_for_user(db, current_user, patient_id)
+    documents = db.scalars(
         select(Document)
         .where(Document.patient_id == patient_id)
-        .order_by(
-            Document.report_date.desc().nullslast(),
-            Document.id.desc(),
-        )
+        .order_by(Document.id.desc())
     ).all()
+
+    valid_documents = []
+    invalid_documents = []
+
+    for document in documents:
+        if normalize_date(document.report_date) is None:
+            invalid_documents.append(document)
+        else:
+            valid_documents.append(document)
+
+    valid_documents.sort(
+        key=lambda document: normalize_date(document.report_date),
+        reverse=True,
+    )
+
+    return valid_documents + invalid_documents
 
 
 @document_router.get("/{document_id}/file")
 def get_document_file(
     document_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    document = db.get(Document, document_id)
-
-    if document is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found",
-        )
+    document = get_document_for_user(db, current_user, document_id)
 
     if not document.storage_key:
         raise HTTPException(
@@ -97,6 +145,7 @@ def get_document_file(
         },
     )
 
+
 @document_router.get(
     "/{document_id}",
     response_model=DocumentResponse,
@@ -104,18 +153,10 @@ def get_document_file(
 def get_document(
     document_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    document = db.get(Document, document_id)
-
-    if document is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found",
-        )
-
+    document = get_document_for_user(db, current_user, document_id)
     return document
-
-
 
 
 @router.post("/{patient_id}/documents", status_code=201)
@@ -123,13 +164,15 @@ async def upload_document(
     patient_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    patient = db.get(Patient, patient_id)
+    get_patient_for_user(db, current_user, patient_id)
 
-    if patient is None:
+    filename = Path(file.filename or "").name
+    if not filename or len(filename) > 255:
         raise HTTPException(
-            status_code=404,
-            detail="Patient not found",
+            status_code=400,
+            detail="A valid filename of at most 255 characters is required",
         )
 
     if file.content_type != "application/pdf":
@@ -138,9 +181,27 @@ async def upload_document(
             detail="Only PDF files are supported",
         )
 
-    file_path = UPLOAD_DIR / file.filename
+    try:
+        enforce_rate_limit("UPLOAD", f"user:{current_user.id}")
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
 
-    content = await file.read()
+    file_path = UPLOAD_DIR / filename
+
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds maximum size of {MAX_UPLOAD_BYTES} bytes",
+        )
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded file is not a valid PDF",
+        )
     file_path.write_bytes(content)
 
     extracted_text = extract_text_from_pdf(str(file_path))
@@ -158,7 +219,7 @@ async def upload_document(
 
     document = Document(
         patient_id=patient_id,
-        filename=file.filename,
+        filename=filename,
         document_type=document_type,
         report_date=report_date,
         file_path=str(file_path),
@@ -167,11 +228,10 @@ async def upload_document(
     db.add(document)
     db.commit()
     db.refresh(document)
-    
-    
+
     storage_key = (
         f"patients/{patient_id}/documents/"
-        f"{document.id}/{document.filename}"
+        f"{document.id}/{filename}"
     )
 
     upload_file(
@@ -180,7 +240,6 @@ async def upload_document(
     )
 
     document.storage_key = storage_key
-
     db.commit()
 
     for index, chunk in enumerate(chunks):
@@ -189,11 +248,10 @@ async def upload_document(
             chunk_index=index,
             text=chunk,
         )
-
         db.add(document_chunk)
 
     db.commit()
-    
+
     extraction = extract_medical_data(
         extracted_text,
         report_date,
