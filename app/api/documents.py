@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
+from sqlalchemy import select
 
 from sqlalchemy.orm import Session
 
@@ -39,6 +40,24 @@ document_router = APIRouter(
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+
+@router.get(
+    "/{patient_id}/documents",
+    response_model=list[DocumentResponse],
+)
+def get_patient_documents(
+    patient_id: int,
+    db: Session = Depends(get_db),
+):
+    return db.scalars(
+        select(Document)
+        .where(Document.patient_id == patient_id)
+        .order_by(
+            Document.report_date.desc().nullslast(),
+            Document.id.desc(),
+        )
+    ).all()
 
 
 @document_router.get("/{document_id}/file")

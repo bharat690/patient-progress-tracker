@@ -1,37 +1,34 @@
 import re
 
+from app.core.dates import normalize_date
+
 
 def extract_report_date(text: str) -> str | None:
     match = re.search(
-        r"Report Date:\s*(\d{4}-\d{2}-\d{2})",
+        r"Report Date:\s*([^\r\n]+)",
         text,
         re.IGNORECASE,
     )
 
-    if match:
-        return match.group(1)
-
-    return None
+    return normalize_date(match.group(1)) if match else None
 
 
 def extract_document_type(text: str) -> str | None:
+    document_types = {
+        "complete blood count & metabolic panel": "blood_report",
+        "follow-up blood report": "blood_report",
+        "prescription / treatment record": "prescription",
+        "follow-up clinical summary": "clinical_summary",
+    }
+
     lines = [
-        line.strip()
+        re.sub(r"\s+", " ", line).strip().casefold()
         for line in text.splitlines()
         if line.strip()
     ]
 
     for line in lines:
-        if line == "Complete Blood Count & Metabolic Panel":
-            return "blood_report"
-
-        if line == "Follow-up Blood Report":
-            return "blood_report"
-
-        if line == "Prescription / Treatment Record":
-            return "prescription"
-
-        if line == "Follow-up Clinical Summary":
-            return "clinical_summary"
+        if line in document_types:
+            return document_types[line]
 
     return None

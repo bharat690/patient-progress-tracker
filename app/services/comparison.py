@@ -1,111 +1,91 @@
-from app.db.neo4j import driver
+from datetime import date
+
+from sqlalchemy.orm import Session
+
+from app.services.observations import get_patient_observations
 
 
 def compare_patient_reports(
+    db: Session,
     patient_id: int,
-    from_date: str,
-    to_date: str,
+    from_date: date,
+    to_date: date,
 ):
-    query = """
-    MATCH (p:Patient {patient_id: toString($patient_id)})
-          -[:HAS_REPORT]->(r:Report)
-          -[:CONTAINS]->(o:Observation)
+    from_date_text = from_date.isoformat()
+    to_date_text = to_date.isoformat()
+    if from_date > to_date:
+        raise ValueError("from_date must be on or before to_date")
 
-    WHERE r.report_date >= $from_date AND r.report_date <= $to_date
+    rows = [
+        row
+        for row in get_patient_observations(db, patient_id)
+        if from_date_text <= row["report_date"] <= to_date_text
+    ]
 
-    RETURN
-        r.report_date AS report_date,
-        r.document_id AS document_id,
-        r.filename AS filename,
-        o.test_name AS test_name,
-        o.value AS value,
-        o.unit AS unit,
-        o.observation_date AS observation_date
-
-    ORDER BY r.report_date ASC, o.test_name ASC
-    """
-
-    with driver.session() as session:
-        result = session.run(
-            query,
-            patient_id=patient_id,
-            from_date=from_date,
-            to_date=to_date,
-        )
-
-        rows = [record.data() for record in result]
-
-        reports = {}
-
+    reports = {}
+    observations_by_test = {}
     for row in rows:
         report_date = row["report_date"]
+        report = reports.setdefault(report_date, {
+            "document_id": row["document_id"],
+            "filename": row["filename"],
+            "documents": [],
+            "observations": [],
+        })
 
-        if report_date not in reports:
-            reports[report_date] = {
+        if not any(
+            document["document_id"] == row["document_id"]
+            for document in report["documents"]
+        ):
+            report["documents"].append({
                 "document_id": row["document_id"],
                 "filename": row["filename"],
-                "observations": [],
-            }
+            })
 
-        reports[report_date]["observations"].append({
+        observation = {
             "test_name": row["test_name"],
             "value": row["value"],
             "unit": row["unit"],
             "observation_date": row["observation_date"],
+        }
+        report["observations"].append(observation)
+        observations_by_test.setdefault(
+            row["test_name"].casefold(), []
+        ).append({
+            **observation,
+            "report_date": report_date,
         })
 
-    # Find earliest and latest report in the requested range
-    report_dates = sorted(reports.keys())
-
     comparison = []
+    for test_observations in observations_by_test.values():
+        if len(test_observations) < 2:
+            continue
 
-    if len(report_dates) >= 2:
-        first_date = report_dates[0]
-        last_date = report_dates[-1]
+        first = test_observations[0]
+        last = test_observations[-1]
+        comparison.append({
+            "test_name": last["test_name"],
+            "unit": last["unit"],
+            "from": {
+                "date": first["report_date"],
+                "value": first["value"],
+            },
+            "to": {
+                "date": last["report_date"],
+                "value": last["value"],
+            },
+            "absolute_change": round(
+                last["value"] - first["value"],
+                4,
+            ),
+        })
 
-        first_observations = {
-            item["test_name"]: item
-            for item in reports[first_date]["observations"]
-        }
-
-        last_observations = {
-            item["test_name"]: item
-            for item in reports[last_date]["observations"]
-        }
-
-        common_tests = sorted(
-            set(first_observations) & set(last_observations)
-        )
-
-        for test_name in common_tests:
-            first = first_observations[test_name]
-            last = last_observations[test_name]
-
-            if (
-                first["value"] is not None
-                and last["value"] is not None
-            ):
-                comparison.append({
-                    "test_name": test_name,
-                    "unit": last["unit"],
-                    "from": {
-                        "date": first_date,
-                        "value": first["value"],
-                    },
-                    "to": {
-                        "date": last_date,
-                        "value": last["value"],
-                    },
-                    "absolute_change": round(
-                        last["value"] - first["value"],
-                        4,
-                    ),
-                })
+    comparison.sort(key=lambda item: item["test_name"].casefold())
 
     return {
         "patient_id": patient_id,
-        "from_date": from_date,
-        "to_date": to_date,
+        "from_date": from_date_text,
+        "to_date": to_date_text,
         "reports": reports,
         "comparison": comparison,
     }
