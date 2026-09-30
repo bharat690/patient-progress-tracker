@@ -2,6 +2,7 @@ from groq import Groq
 
 from app.core.config import GROQ_API_KEY
 from app.services.retrieval import retrieve_patient_context
+from app.services.rag_sources import select_answer_sources
 
 
 client = Groq(api_key=GROQ_API_KEY)
@@ -76,5 +77,9 @@ RELEVANT DOCUMENT CHUNKS:
 
     return {
         "answer": answer,
-        "sources": context["vector_results"],
+        "sources": select_answer_sources(
+            answer=answer,
+            vector_results=context["vector_results"],
+            graph_results=context["graph_results"],
+        ),
     }
