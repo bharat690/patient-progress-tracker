@@ -25,7 +25,10 @@ def extract_report_date(text: str) -> str | None:
 def extract_document_type(text: str) -> str | None:
     document_types = {
         "complete blood count & metabolic panel": "blood_report",
+        "blood / laboratory report": "blood_report",
+        "follow-up blood / laboratory report": "blood_report",
         "follow-up blood report": "blood_report",
+        "medication prescription": "prescription",
         "prescription / treatment record": "prescription",
         "follow-up clinical summary": "clinical_summary",
     }
