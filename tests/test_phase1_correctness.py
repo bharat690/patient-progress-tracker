@@ -153,6 +153,18 @@ class PhaseOneCorrectnessTests(unittest.TestCase):
             extract_document_type("  FOLLOW-UP   BLOOD REPORT  "),
             "blood_report",
         )
+        self.assertEqual(
+            extract_document_type("  BLOOD / LABORATORY REPORT  "),
+            "blood_report",
+        )
+        self.assertEqual(
+            extract_document_type("Follow-up Blood / Laboratory Report"),
+            "blood_report",
+        )
+        self.assertEqual(
+            extract_document_type("Medication Prescription"),
+            "prescription",
+        )
         self.assertIsNone(extract_document_type("Discharge note"))
 
 
