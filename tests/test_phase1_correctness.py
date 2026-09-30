@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db.postgres import Base
 from app.models.document import Document
 from app.models.observation import Observation
+from app.schemas.document import DocumentResponse
 from app.services.comparison import compare_patient_reports
 from app.services.metadata_extractor import (
     extract_document_type,
@@ -122,6 +123,17 @@ class PhaseOneCorrectnessTests(unittest.TestCase):
             "2026-01-10",
         )
         self.assertIsNone(extract_report_date("Report Date: 2026-02-30"))
+
+    def test_document_response_normalizes_legacy_report_dates(self):
+        response = DocumentResponse.model_validate({
+            "id": 1,
+            "patient_id": 1,
+            "filename": "legacy.pdf",
+            "document_type": "blood_report",
+            "report_date": "01/10/2026",
+        })
+
+        self.assertEqual(response.report_date, "2026-01-10")
 
     def test_document_type_detection_is_case_and_whitespace_insensitive(self):
         self.assertEqual(
