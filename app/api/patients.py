@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -45,30 +47,46 @@ def ask_patient(
 
 
 @router.get("/{patient_id}/metrics")
-def patient_metrics(patient_id: int):
+def patient_metrics(
+    patient_id: int,
+    db: Session = Depends(get_db),
+):
     return {
         "patient_id": patient_id,
-        "metrics": get_patient_metrics(patient_id),
+        "metrics": get_patient_metrics(db, patient_id),
     }
 
 @router.get("/{patient_id}/compare")
 def compare_reports(
     patient_id: int,
-    from_date: str,
-    to_date: str,
+    from_date: date,
+    to_date: date,
+    db: Session = Depends(get_db),
 ):
+    if from_date > to_date:
+        raise HTTPException(
+            status_code=422,
+            detail="from_date must be on or before to_date",
+        )
+
     return compare_patient_reports(
+        db=db,
         patient_id=patient_id,
         from_date=from_date,
         to_date=to_date,
     )
 
 @router.get("/{patient_id}/trends/{test_name}")
-def patient_trend(patient_id: int, test_name: str):
+def patient_trend(
+    patient_id: int,
+    test_name: str,
+    db: Session = Depends(get_db),
+):
     return {
         "patient_id": patient_id,
         "test_name": test_name,
         "trend": get_patient_trend(
+            db=db,
             patient_id=patient_id,
             test_name=test_name,
         ),
