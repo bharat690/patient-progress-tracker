@@ -1,15 +1,8 @@
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class UserRegister(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    email: str = Field(..., min_length=3, max_length=255)
-    password: str = Field(..., min_length=8, max_length=128)
-
-
-class UserLogin(BaseModel):
-    email: str
-    password: str
+class GoogleCredential(BaseModel):
+    credential: str = Field(..., min_length=1, max_length=16384)
 
 
 class UserPublic(BaseModel):

@@ -12,23 +12,26 @@ and provide a random `JWT_SECRET_KEY` of at least 32 characters.
 
 ## Database migration
 
-The auth fields require a database migration. Apply it before deploying the
-application:
+Apply database migrations before deploying the application:
 
 ```powershell
 alembic upgrade head
 ```
 
-Legacy users receive no password from this migration and must register with a
-new email or have their account credentials provisioned through a trusted
-administrative process.
-
 ## Authentication
 
-Create an account with `POST /auth/register`, obtain an access token with
-`POST /auth/login`, and send it as `Authorization: Bearer <token>` to protected
-patient and document endpoints. User registration always assigns the standard
-doctor role; clients cannot select a role.
+Authentication uses Google Identity Services. Configure `GOOGLE_CLIENT_ID`
+on the backend and the matching `VITE_GOOGLE_CLIENT_ID` on the frontend. The
+Google OAuth web client must allow the frontend origins used in production and
+local development.
+
+The backend verifies Google's signed ID token and creates a doctor account on
+first sign-in. Existing accounts are linked by verified email, preserving
+their patient records and user IDs. Password registration and login are no
+longer accepted.
+
+Authenticated clients send the issued application token as a Bearer token to
+protected patient and document endpoints.
 
 ## Security configuration
 
