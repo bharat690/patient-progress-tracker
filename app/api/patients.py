@@ -21,6 +21,7 @@ from app.services.patient_timeline import get_patient_timeline
 from app.services.trends import get_patient_trend
 from app.services.comparison import compare_patient_reports
 from app.services.metrics import get_patient_metrics
+from app.services.patient_deletion import delete_patient_records
 
 
 router = APIRouter(
@@ -222,5 +223,4 @@ def delete_patient(
     current_user: User = Depends(get_current_user),
 ):
     patient = get_patient_for_user(db, current_user, patient_id)
-    db.delete(patient)
-    db.commit()
+    delete_patient_records(db, patient)

@@ -124,6 +124,19 @@ class PhaseOneCorrectnessTests(unittest.TestCase):
         )
         self.assertIsNone(extract_report_date("Report Date: 2026-02-30"))
 
+    def test_report_date_extraction_accepts_document_and_visit_date_labels(self):
+        self.assertEqual(
+            extract_report_date(
+                "Document Date: 2026-01-15\n"
+                "Sample Collection Date: 2026-01-14"
+            ),
+            "2026-01-15",
+        )
+        self.assertEqual(
+            extract_report_date("Visit Date:\nApril 29, 2026"),
+            "2026-04-29",
+        )
+
     def test_document_response_normalizes_legacy_report_dates(self):
         response = DocumentResponse.model_validate({
             "id": 1,

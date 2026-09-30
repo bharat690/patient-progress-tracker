@@ -44,6 +44,28 @@ def upload_file(
     )
 
 
+def delete_files(object_keys: list[str]) -> None:
+    for start in range(0, len(object_keys), 1000):
+        response = s3_client.delete_objects(
+            Bucket=AWS_S3_BUCKET,
+            Delete={
+                "Objects": [
+                    {"Key": object_key}
+                    for object_key in object_keys[start : start + 1000]
+                ],
+                "Quiet": True,
+            },
+        )
+        errors = response.get("Errors", [])
+        if errors:
+            failed_keys = ", ".join(
+                item.get("Key", "<unknown>") for item in errors
+            )
+            raise RuntimeError(
+                f"Failed to delete object-storage files: {failed_keys}"
+            )
+
+
 def download_file(object_key: str) -> bytes:
     response = s3_client.get_object(
         Bucket=AWS_S3_BUCKET,
